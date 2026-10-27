@@ -1,0 +1,13 @@
+# 构建输出
+bin/
+obj/
+publish/
+*.user
+.vs/
+*.suo
+artifacts/
+dist/
+
+# 本机测试产物
+self-test-result.txt
+*.log

@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>TcpDebugAssistant</AssemblyName>
+    <RootNamespace>TcpDebugAssistant.App</RootNamespace>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <AssemblyTitle>TCP 调试助手</AssemblyTitle>
+    <Product>TCP 调试助手</Product>
+    <Company>Chao-Wen-S</Company>
+    <Description>轻量级 TCP 客户端/服务端调试工具，支持 HEX、定时发送、多客户端广播与断线重连。</Description>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TcpDebugAssistant.Core\TcpDebugAssistant.Core.csproj" />
+  </ItemGroup>
+
+</Project>
