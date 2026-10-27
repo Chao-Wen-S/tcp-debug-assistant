@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using TcpDebugAssistant.Core;
@@ -229,7 +229,7 @@ public sealed partial class MainForm
         if (server)
         {
             _stateLabel.Text = "监听中 0.0.0.0:9000";
-            _stateLabel.ForeColor = Color.FromArgb(22, 140, 76);
+            _stateLabel.Tone = PillTone.Success;
             _stateItem.Text = "监听中 0.0.0.0:9000";
             _connectBtn.Text = "停止监听";
             _portBox.Value = 9000;
@@ -262,7 +262,7 @@ public sealed partial class MainForm
                 "[09:40:55.118] [服务器] 温度 23.5C 湿度 41%\r\n" +
                 "[09:40:58.902] [服务器] 1A 2B 3C 4D 5E 6F\r\n";
             _stateLabel.Text = "已连接 127.0.0.1:8080";
-            _stateLabel.ForeColor = Color.FromArgb(22, 140, 76);
+            _stateLabel.Tone = PillTone.Success;
             _stateItem.Text = "已连接 127.0.0.1:8080";
             _connectBtn.Text = "断开";
             _connItem.Text = "连接 1";

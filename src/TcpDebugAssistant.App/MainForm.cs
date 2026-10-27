@@ -1,4 +1,5 @@
-﻿using System.Net;
+using System.Diagnostics;
+using System.Net;
 using System.Text;
 using TcpDebugAssistant.Core;
 
@@ -6,6 +7,7 @@ namespace TcpDebugAssistant.App;
 
 public sealed partial class MainForm : Form
 {
+    private const string RepoUrl = "https://github.com/Chao-Wen-S/tcp-debug-assistant";
     private const int MaxLogChars = 400_000;
     private const int TrimToChars = 200_000;
 
@@ -22,313 +24,478 @@ public sealed partial class MainForm : Form
     private long _totalReceived;
     private bool _switchingMode;
 
-    private readonly ComboBox _modeBox = new();
+    private readonly SelectField _modeBox = new();
     private readonly TextBox _hostBox = new();
     private readonly NumericUpDown _portBox = new();
-    private readonly Button _connectBtn = new();
-    private readonly Label _stateLabel = new();
+    private readonly FlatButton _connectBtn = new();
+    private readonly PillLabel _stateLabel = new();
     private readonly CheckBox _autoReconnectChk = new();
     private readonly NumericUpDown _reconnectBox = new();
 
     private readonly SplitContainer _mainSplit = new();
-    private readonly ListView _clientList = new();
+    private readonly SplitContainer _rightSplit = new();
+    private readonly ThemedListView _clientList = new();
     private readonly CheckBox _broadcastChk = new();
     private readonly Label _clientHint = new();
 
-    private readonly ComboBox _recvFormatBox = new();
+    private readonly SelectField _recvFormatBox = new();
     private readonly CheckBox _timestampChk = new();
     private readonly CheckBox _autoScrollChk = new();
     private readonly RichTextBox _recvBox = new();
 
-    private readonly ComboBox _sendFormatBox = new();
-    private readonly ComboBox _lineEndingBox = new();
+    private readonly SelectField _sendFormatBox = new();
+    private readonly SelectField _lineEndingBox = new();
     private readonly NumericUpDown _autoSendInterval = new();
     private readonly CheckBox _autoSendChk = new();
     private readonly TextBox _sendBox = new();
-    private readonly Button _sendBtn = new();
+    private readonly FlatButton _sendBtn = new();
 
-    private readonly ToolStripStatusLabel _stateItem = new();
-    private readonly ToolStripStatusLabel _txItem = new();
-    private readonly ToolStripStatusLabel _rxItem = new();
-    private readonly ToolStripStatusLabel _connItem = new();
-    private readonly ToolStripStatusLabel _tipItem = new();
+    private readonly Label _stateItem = new();
+    private readonly Label _txItem = new();
+    private readonly Label _rxItem = new();
+    private readonly Label _connItem = new();
+    private readonly Label _tipItem = new();
+
+    private readonly BorderedPanel _header = new();
+    private readonly BorderedPanel _statusBar = new();
+    private readonly Panel _configHost = new();
+    private readonly FlatButton _themeBtn = new();
+    private readonly FlatButton _githubBtn = new();
 
     public MainForm()
     {
-        Text = "TCP 调试助手 v1.0";
+        Text = "TCP 调试助手 v1.1";
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(1180, 760);
-        MinimumSize = new Size(940, 620);
-        Font = new Font("Microsoft YaHei UI", 9F);
+        ClientSize = new Size(1200, 780);
+        MinimumSize = new Size(1000, 660);
+        Font = Fonts.Ui(9F);
         DoubleBuffered = true;
+        BackColor = Theme.Current.Bg;
 
-        BuildTopPanel();
+        // Dock 自高索引向低索引处理：后加入的面板先占边，所以 Fill 排在最前、顶栏排在最后。
         BuildMainArea();
-        BuildStatusStrip();
-        // Dock 布局按 z 序反向处理：Fill 面板必须排在最后，否则会吞掉顶部/底部面板的空间。
-        Controls.SetChildIndex(_mainSplit, 0);
+        BuildStatusBar();
+        BuildConfigCard();
+        BuildHeader();
+
         WireEvents();
 
         _modeBox.SelectedIndex = 0;
         ApplyMode();
+        ApplyTheme();
 
         _flushTimer.Tick += (_, _) => FlushPending();
         _flushTimer.Start();
     }
-    private void BuildTopPanel()
-    {
-        var top = new Panel { Dock = DockStyle.Top, Height = 92, Padding = new Padding(10, 8, 10, 6), BackColor = Color.FromArgb(246, 247, 250) };
 
-        var modeLabel = new Label { Text = "模式", AutoSize = true, Location = new Point(12, 14) };
+    /// <summary>刷新整套配色（浅色 / 深色切换时调用）。</summary>
+    internal void ApplyTheme()
+    {
+        var t = Theme.Current;
+        BackColor = t.Bg;
+        _themeBtn.Text = t.Dark ? "☀  浅色" : "🌙  深色";
+        Ui.Apply(this, t);
+        ThemePaint.Apply(this, t);
+        ApplyTitleBarTheme(t.Dark);
+        Invalidate(true);
+    }
+
+    [System.Runtime.InteropServices.DllImport("dwmapi.dll", PreserveSig = true)]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
+
+    /// <summary>让系统标题栏跟随浅色 / 深色主题（Windows 10 1809+）。</summary>
+    private void ApplyTitleBarTheme(bool dark)
+    {
+        if (!IsHandleCreated)
+        {
+            return;
+        }
+
+        var value = dark ? 1 : 0;
+        try
+        {
+            // 20 = DWMWA_USE_IMMERSIVE_DARK_MODE（新版），19 = 旧版编号
+            if (DwmSetWindowAttribute(Handle, 20, ref value, sizeof(int)) != 0)
+            {
+                DwmSetWindowAttribute(Handle, 19, ref value, sizeof(int));
+            }
+
+            const uint flags = 0x0001 | 0x0002 | 0x0004 | 0x0020; // NOSIZE | NOMOVE | NOZORDER | FRAMECHANGED
+            SetWindowPos(Handle, IntPtr.Zero, 0, 0, 0, 0, flags);
+        }
+        catch (DllNotFoundException)
+        {
+            // 非 Windows 或精简系统：忽略
+        }
+        catch (EntryPointNotFoundException)
+        {
+            // 老系统没有该接口：忽略
+        }
+    }
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        ApplyTitleBarTheme(Theme.Current.Dark);
+    }
+
+    private void BuildHeader()
+    {
+        _header.Dock = DockStyle.Top;
+        _header.Height = 58;
+        _header.BorderBottom = true;
+        _header.Padding = new Padding(18, 0, 18, 0);
+
+        var mark = new BrandMark { Location = new Point(18, 14) };
+
+        var title = new Label
+        {
+            Text = "TCP 调试助手",
+            Font = Fonts.Ui(12F, FontStyle.Bold),
+            AutoSize = true,
+            Location = new Point(60, 6)
+        };
+
+        var version = new Label { Text = "v1.1", Font = Fonts.Ui(8.5F), AutoSize = true, Tag = "muted" };
+        var titleWidth = TextRenderer.MeasureText(title.Text, title.Font).Width;
+        version.Location = new Point(60 + titleWidth + 10, 17);
+
+        var sub = new Label
+        {
+            Text = "客户端 / 服务端 · HEX · 定时发送 · 多客户端广播",
+            Font = Fonts.Ui(8.5F),
+            AutoSize = true,
+            Tag = "muted",
+            Location = new Point(60, 31)
+        };
+
+        _themeBtn.Text = "🌙  深色";
+        _themeBtn.Variant = ButtonVariant.Ghost;
+        _themeBtn.Size = new Size(96, 30);
+        _themeBtn.Margin = new Padding(8, 0, 0, 0);
+        _themeBtn.Click += (_, _) =>
+        {
+            Theme.Toggle();
+            ApplyTheme();
+        };
+
+        _githubBtn.Text = "GitHub  ↗";
+        _githubBtn.Variant = ButtonVariant.Ghost;
+        _githubBtn.Size = new Size(96, 30);
+        _githubBtn.Margin = new Padding(8, 0, 0, 0);
+        _githubBtn.Click += (_, _) => OpenRepo();
+
+        // 右上角按钮改为按父容器宽度手工定位 + 锚定，避免流式布局在缩放时错位。
+        void PlaceHeaderRight()
+        {
+            var right = _header.ClientSize.Width - 18;
+            _themeBtn.Location = new Point(right - _themeBtn.Width, 14);
+            _githubBtn.Location = new Point(right - _themeBtn.Width - 10 - _githubBtn.Width, 14);
+        }
+
+        _themeBtn.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        _githubBtn.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+
+        _header.Controls.AddRange(new Control[] { mark, title, version, sub, _githubBtn, _themeBtn });
+        _header.Resize += (_, _) => PlaceHeaderRight();
+        Controls.Add(_header);
+        PlaceHeaderRight();
+    }
+
+    private static void OpenRepo()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(RepoUrl) { UseShellExecute = true });
+        }
+        catch
+        {
+            // 浏览器启动失败时忽略。
+        }
+    }
+    private void BuildConfigCard()
+    {
+        _configHost.Dock = DockStyle.Top;
+        _configHost.Height = 144;
+        _configHost.Padding = new Padding(16, 14, 16, 4);
+        _configHost.Tag = "bg";
+
+        var card = new Card("连接设置", 14, 30) { Dock = DockStyle.Fill };
+        var rowWidth = ClientSize.Width - 16 * 2 - 2 - 14 * 2;
+
+        var row1 = new Panel { Dock = DockStyle.Top, Height = 34, Tag = "surface" };
+        var row2 = new Panel { Dock = DockStyle.Top, Height = 32, Tag = "surface" };
+
+        var modeLabel = new Label { Text = "模式", AutoSize = true, Location = new Point(2, 9) };
         _modeBox.DropDownStyle = ComboBoxStyle.DropDownList;
         _modeBox.Items.AddRange(new object[] { "TCP 客户端", "TCP 服务端" });
-        _modeBox.Location = new Point(52, 11);
-        _modeBox.Width = 120;
+        _modeBox.Location = new Point(42, 3);
+        _modeBox.Width = 136;
 
-        var hostLabel = new Label { Text = "服务器地址", AutoSize = true, Location = new Point(190, 14) };
-        _hostBox.Location = new Point(268, 11);
-        _hostBox.Width = 170;
+        var hostLabel = new Label { Text = "服务器地址", AutoSize = true, Location = new Point(196, 9) };
+        _hostBox.Location = new Point(280, 5);
+        _hostBox.Width = 166;
         _hostBox.Text = "127.0.0.1";
 
-        var portLabel = new Label { Text = "端口", AutoSize = true, Location = new Point(452, 14) };
-        _portBox.Location = new Point(490, 11);
-        _portBox.Width = 90;
+        var portLabel = new Label { Text = "端口", AutoSize = true, Location = new Point(456, 9) };
+        _portBox.Location = new Point(494, 3);
+        _portBox.Width = 86;
         _portBox.Minimum = 1;
         _portBox.Maximum = 65535;
         _portBox.Value = 8080;
 
         _connectBtn.Text = "连接";
-        _connectBtn.Location = new Point(596, 10);
-        _connectBtn.Size = new Size(108, 30);
-        _connectBtn.Font = new Font(Font, FontStyle.Bold);
+        _connectBtn.Variant = ButtonVariant.Primary;
+        _connectBtn.Font = Fonts.Ui(9F, FontStyle.Bold);
+        _connectBtn.Size = new Size(116, 30);
+        _connectBtn.Location = new Point(596, 2);
 
         _stateLabel.Text = "未连接";
-        _stateLabel.AutoSize = true;
-        _stateLabel.Location = new Point(716, 16);
-        _stateLabel.ForeColor = Color.FromArgb(120, 120, 120);
-        _stateLabel.Font = new Font(Font, FontStyle.Bold);
+        _stateLabel.Tone = PillTone.Neutral;
+        _stateLabel.Size = new Size(212, 28);
+        _stateLabel.Location = new Point(rowWidth - 212, 3);
+        row1.Resize += (_, _) => _stateLabel.Left = row1.ClientSize.Width - _stateLabel.Width;
+
+        row1.Controls.AddRange(new Control[] { modeLabel, _modeBox, hostLabel, _hostBox, portLabel, _portBox, _connectBtn, _stateLabel });
 
         _autoReconnectChk.Text = "断线自动重连";
         _autoReconnectChk.AutoSize = true;
-        _autoReconnectChk.Location = new Point(52, 52);
+        _autoReconnectChk.Location = new Point(2, 6);
 
-        var reconnectLabel = new Label { Text = "间隔", AutoSize = true, Location = new Point(172, 54) };
-        _reconnectBox.Location = new Point(208, 51);
-        _reconnectBox.Width = 80;
+        var reconnectLabel = new Label { Text = "间隔", AutoSize = true, Location = new Point(148, 8) };
+        _reconnectBox.Location = new Point(184, 4);
+        _reconnectBox.Width = 86;
         _reconnectBox.Minimum = 200;
         _reconnectBox.Maximum = 600000;
         _reconnectBox.Increment = 500;
         _reconnectBox.Value = 2000;
 
-        var reconnectMs = new Label { Text = "ms", AutoSize = true, Location = new Point(292, 54) };
+        var msLabel = new Label { Text = "毫秒", AutoSize = true, Location = new Point(278, 8) };
 
         var tip = new Label
         {
-            Text = "客户端模式主动连接服务器；服务端模式监听本地端口，可同时接入多个客户端，支持单发与广播。",
+            Text = "客户端模式主动连接服务器；服务端模式监听本地端口，可多客户端接入，支持单发与广播。",
             AutoSize = true,
-            Location = new Point(330, 54),
-            ForeColor = Color.FromArgb(110, 110, 110)
+            Location = new Point(320, 8),
+            Tag = "muted"
         };
 
-        top.Controls.AddRange(new Control[]
-        {
-            modeLabel, _modeBox, hostLabel, _hostBox, portLabel, _portBox, _connectBtn, _stateLabel,
-            _autoReconnectChk, reconnectLabel, _reconnectBox, reconnectMs, tip
-        });
+        row2.Controls.AddRange(new Control[] { _autoReconnectChk, reconnectLabel, _reconnectBox, msLabel, tip });
 
-        Controls.Add(top);
-        _topPanel = top;
+        // Dock 自后向前处理：row2 先加入，row1 后加入才能排在最上面。
+        card.Body.Controls.Add(row2);
+        card.Body.Controls.Add(row1);
+
+        _configHost.Controls.Add(card);
+        Controls.Add(_configHost);
     }
-
-    private Panel _topPanel = new();
     private void BuildMainArea()
     {
         _mainSplit.Dock = DockStyle.Fill;
         _mainSplit.Orientation = Orientation.Vertical;
-        _mainSplit.SplitterWidth = 6;
-        // 先给一个足够大的初始尺寸，否则默认 150x150 会与 MinSize 冲突，设置 MinSize 时抛 SplitterDistance 异常。
-        _mainSplit.Size = new Size(1160, 640);
-        _mainSplit.Panel1MinSize = 250;
-        _mainSplit.Panel2MinSize = 480;
+        _mainSplit.SplitterWidth = 12;
+        _mainSplit.FixedPanel = FixedPanel.Panel1;
+        _mainSplit.Size = new Size(1168, 540);
+        _mainSplit.Panel1MinSize = 280;
+        _mainSplit.Panel2MinSize = 520;
+        _mainSplit.Panel1.Tag = "bg";
+        _mainSplit.Panel1.Padding = new Padding(16, 12, 0, 16);
+        _mainSplit.Panel2.Tag = "bg";
+        _mainSplit.Panel2.Padding = new Padding(0, 12, 16, 16);
 
-        // ---- 左侧：客户端列表 ----
-        var leftPanel = _mainSplit.Panel1;
-        leftPanel.Padding = new Padding(8);
+        var clientCard = new Card("已连接客户端", 12, 30) { Dock = DockStyle.Fill };
 
         _clientList.Dock = DockStyle.Fill;
         _clientList.View = View.Details;
-        _clientList.FullRowSelect = true;
-        _clientList.GridLines = true;
-        _clientList.HideSelection = false;
-        _clientList.MultiSelect = false;
-        _clientList.Columns.Add("客户端", 60);
-        _clientList.Columns.Add("远端地址", 150);
-        _clientList.Columns.Add("接收", 64, HorizontalAlignment.Right);
-        _clientList.Columns.Add("发送", 64, HorizontalAlignment.Right);
+        _clientList.HeaderStyle = ColumnHeaderStyle.Nonclickable;
+        _clientList.Columns.Add("客户端", 74);
+        _clientList.Columns.Add("远端地址", 140);
+        _clientList.Columns.Add("接收", 84, HorizontalAlignment.Right);
+        _clientList.Columns.Add("发送", 84, HorizontalAlignment.Right);
 
-        var leftTitle = new Label
+        var clientBottom = new Panel { Dock = DockStyle.Bottom, Height = 84, Tag = "surface" };
+
+        var disconnectBtn = new FlatButton
         {
-            Text = "已连接客户端",
-            Dock = DockStyle.Top,
-            Height = 26,
-            Font = new Font(Font.FontFamily, 9.5F, FontStyle.Bold),
-            TextAlign = ContentAlignment.MiddleLeft
+            Text = "断开选中",
+            Variant = ButtonVariant.Secondary,
+            Size = new Size(92, 30),
+            Location = new Point(0, 4)
         };
-
-        var clientButtons = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Bottom,
-            Height = 38,
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
-            Padding = new Padding(0, 4, 0, 0)
-        };
-
-        var disconnectBtn = new Button { Text = "断开选中", Width = 86, Height = 28 };
         disconnectBtn.Click += (_, _) => DisconnectSelectedClient();
-        var disconnectAllBtn = new Button { Text = "全部断开", Width = 86, Height = 28 };
+
+        var disconnectAllBtn = new FlatButton
+        {
+            Text = "全部断开",
+            Variant = ButtonVariant.Danger,
+            Size = new Size(92, 30),
+            Location = new Point(100, 4)
+        };
         disconnectAllBtn.Click += (_, _) => _server.DisconnectAll("服务端主动断开全部客户端");
+
         _broadcastChk.Text = "广播发送";
         _broadcastChk.Checked = true;
         _broadcastChk.AutoSize = true;
-        _broadcastChk.Margin = new Padding(8, 8, 0, 0);
-        clientButtons.Controls.AddRange(new Control[] { disconnectBtn, disconnectAllBtn, _broadcastChk });
+        _broadcastChk.Location = new Point(206, 11);
 
-        _clientHint.Text = "双击列表项可直接断开该客户端。未选中时按广播规则发送。";
-        _clientHint.Dock = DockStyle.Bottom;
-        _clientHint.Height = 34;
-        _clientHint.ForeColor = Color.FromArgb(120, 120, 120);
+        _clientHint.Text = "双击可断开客户端；未选中时按广播规则发送。";
+        _clientHint.Location = new Point(0, 46);
+        _clientHint.Size = new Size(330, 34);
+        _clientHint.Font = Fonts.Ui(8F);
+        _clientHint.Tag = "muted";
 
-        leftPanel.Controls.Add(_clientList);
-        leftPanel.Controls.Add(leftTitle);
-        leftPanel.Controls.Add(clientButtons);
-        leftPanel.Controls.Add(_clientHint);
+        clientBottom.Controls.AddRange(new Control[] { disconnectBtn, disconnectAllBtn, _broadcastChk, _clientHint });
 
-        // ---- 右侧：接收区 + 发送区 ----
-        var rightSplit = new SplitContainer
-        {
-            Dock = DockStyle.Fill,
-            Orientation = Orientation.Horizontal,
-            SplitterWidth = 6,
-            Size = new Size(840, 600)
-        };
-        rightSplit.Panel1MinSize = 160;
-        rightSplit.Panel2MinSize = 150;
-        rightSplit.SplitterDistance = 340;
+        clientCard.Body.Controls.Add(_clientList);
+        clientCard.Body.Controls.Add(clientBottom);
+        _mainSplit.Panel1.Controls.Add(clientCard);
 
-        var recvGroup = BuildReceiveGroup();
-        rightSplit.Panel1.Controls.Add(recvGroup);
+        _rightSplit.Dock = DockStyle.Fill;
+        _rightSplit.Orientation = Orientation.Horizontal;
+        _rightSplit.SplitterWidth = 12;
+        _rightSplit.Size = new Size(700, 540);
+        _rightSplit.Panel1MinSize = 180;
+        _rightSplit.Panel2MinSize = 170;
+        _rightSplit.Panel1.Tag = "bg";
+        _rightSplit.Panel2.Tag = "bg";
+        _rightSplit.Panel1.Controls.Add(BuildReceiveCard());
+        _rightSplit.Panel2.Controls.Add(BuildSendCard());
 
-        var sendGroup = BuildSendGroup();
-        rightSplit.Panel2.Controls.Add(sendGroup);
-
-        _mainSplit.Panel2.Controls.Add(rightSplit);
-
+        _mainSplit.Panel2.Controls.Add(_rightSplit);
         Controls.Add(_mainSplit);
-        _rightSplit = rightSplit;
     }
-
-    private SplitContainer _rightSplit = new();
-    private GroupBox BuildReceiveGroup()
+    private Card BuildReceiveCard()
     {
-        var group = new GroupBox { Text = "接收区", Dock = DockStyle.Fill, Padding = new Padding(8, 6, 8, 8) };
+        var card = new Card("接收区", 12, 30) { Dock = DockStyle.Fill };
 
         var toolbar = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 32,
+            Height = 40,
             WrapContents = false,
-            FlowDirection = FlowDirection.LeftToRight
+            FlowDirection = FlowDirection.LeftToRight,
+            Tag = "surface"
         };
+
+        var formatLabel = new Label { Text = "显示", AutoSize = true, Margin = new Padding(0, 13, 6, 0) };
 
         _recvFormatBox.DropDownStyle = ComboBoxStyle.DropDownList;
         _recvFormatBox.Items.AddRange(new object[] { "文本", "HEX" });
         _recvFormatBox.SelectedIndex = 0;
-        _recvFormatBox.Width = 74;
-        _recvFormatBox.Margin = new Padding(0, 4, 8, 0);
+        _recvFormatBox.Width = 78;
+        _recvFormatBox.Margin = new Padding(0, 9, 14, 0);
 
         _timestampChk.Text = "时间戳";
         _timestampChk.Checked = true;
         _timestampChk.AutoSize = true;
-        _timestampChk.Margin = new Padding(0, 8, 10, 0);
+        _timestampChk.Margin = new Padding(0, 12, 14, 0);
 
         _autoScrollChk.Text = "自动滚动";
         _autoScrollChk.Checked = true;
         _autoScrollChk.AutoSize = true;
-        _autoScrollChk.Margin = new Padding(0, 8, 10, 0);
+        _autoScrollChk.Margin = new Padding(0, 12, 14, 0);
 
-        var clearBtn = new Button { Text = "清空", Width = 64, Height = 26, Margin = new Padding(0, 2, 8, 0) };
+        var clearBtn = new FlatButton
+        {
+            Text = "清空",
+            Variant = ButtonVariant.Secondary,
+            Size = new Size(64, 28),
+            Margin = new Padding(0, 6, 8, 0)
+        };
         clearBtn.Click += (_, _) => _recvBox.Clear();
 
-        var saveBtn = new Button { Text = "保存日志", Width = 90, Height = 26, Margin = new Padding(0, 2, 0, 0) };
+        var saveBtn = new FlatButton
+        {
+            Text = "保存日志",
+            Variant = ButtonVariant.Secondary,
+            Size = new Size(92, 28),
+            Margin = new Padding(0, 6, 0, 0)
+        };
         saveBtn.Click += (_, _) => SaveLog();
-
-        var formatLabel = new Label { Text = "显示", AutoSize = true, Margin = new Padding(0, 9, 6, 0) };
 
         toolbar.Controls.AddRange(new Control[] { formatLabel, _recvFormatBox, _timestampChk, _autoScrollChk, clearBtn, saveBtn });
 
         _recvBox.Dock = DockStyle.Fill;
         _recvBox.ReadOnly = true;
-        _recvBox.BackColor = Color.White;
-        _recvBox.Font = new Font("Consolas", 9.75F);
+        _recvBox.BorderStyle = BorderStyle.None;
+        _recvBox.Font = Fonts.Mono(9.75F);
         _recvBox.WordWrap = true;
         _recvBox.DetectUrls = false;
         _recvBox.HideSelection = false;
+        _recvBox.ScrollBars = RichTextBoxScrollBars.Vertical;
 
-        group.Controls.Add(_recvBox);
-        group.Controls.Add(toolbar);
-        return group;
+        card.Body.Controls.Add(_recvBox);
+        card.Body.Controls.Add(toolbar);
+        return card;
     }
-
-    private GroupBox BuildSendGroup()
+    private Card BuildSendCard()
     {
-        var group = new GroupBox { Text = "发送区", Dock = DockStyle.Fill, Padding = new Padding(8, 6, 8, 8) };
+        var card = new Card("发送区", 12, 30) { Dock = DockStyle.Fill };
 
-        var bottom = new Panel { Dock = DockStyle.Bottom, Height = 46 };
+        var bottom = new Panel { Dock = DockStyle.Bottom, Height = 54, Tag = "surface" };
+
+        var sendHost = new Panel
+        {
+            Dock = DockStyle.Right,
+            Width = 164,
+            Padding = new Padding(8, 11, 0, 11),
+            Tag = "surface"
+        };
+
+        _sendBtn.Text = "发送  Ctrl+Enter";
+        _sendBtn.Variant = ButtonVariant.Primary;
+        _sendBtn.Font = Fonts.Ui(9F, FontStyle.Bold);
+        _sendBtn.Dock = DockStyle.Fill;
+        _sendBtn.Click += async (_, _) => await SendCurrentAsync();
+        sendHost.Controls.Add(_sendBtn);
 
         var flow = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
             WrapContents = false,
-            FlowDirection = FlowDirection.LeftToRight
+            FlowDirection = FlowDirection.LeftToRight,
+            Tag = "surface"
         };
+
+        var sendFormatLabel = new Label { Text = "编码", AutoSize = true, Margin = new Padding(0, 19, 6, 0) };
 
         _sendFormatBox.DropDownStyle = ComboBoxStyle.DropDownList;
         _sendFormatBox.Items.AddRange(new object[] { "文本", "HEX" });
         _sendFormatBox.SelectedIndex = 0;
-        _sendFormatBox.Width = 74;
-        _sendFormatBox.Margin = new Padding(0, 11, 8, 0);
+        _sendFormatBox.Width = 78;
+        _sendFormatBox.Margin = new Padding(0, 15, 14, 0);
+
+        var lineEndingLabel = new Label { Text = "行尾", AutoSize = true, Margin = new Padding(0, 19, 6, 0) };
 
         _lineEndingBox.DropDownStyle = ComboBoxStyle.DropDownList;
         _lineEndingBox.Items.AddRange(new object[] { "无行尾", "CRLF (\\r\\n)", "LF (\\n)", "CR (\\r)" });
         _lineEndingBox.SelectedIndex = 1;
-        _lineEndingBox.Width = 108;
-        _lineEndingBox.Margin = new Padding(0, 11, 12, 0);
-
-        var sendFormatLabel = new Label { Text = "编码", AutoSize = true, Margin = new Padding(0, 15, 6, 0) };
-        var lineEndingLabel = new Label { Text = "行尾", AutoSize = true, Margin = new Padding(0, 15, 6, 0) };
+        _lineEndingBox.Width = 132;
+        _lineEndingBox.Margin = new Padding(0, 15, 14, 0);
 
         _autoSendInterval.Minimum = 10;
         _autoSendInterval.Maximum = 600000;
         _autoSendInterval.Increment = 100;
         _autoSendInterval.Value = 1000;
-        _autoSendInterval.Width = 76;
-        _autoSendInterval.Margin = new Padding(0, 11, 4, 0);
+        _autoSendInterval.Width = 78;
+        _autoSendInterval.Margin = new Padding(0, 15, 6, 0);
 
-        var msLabel = new Label { Text = "ms", AutoSize = true, Margin = new Padding(0, 15, 8, 0) };
+        var msLabel = new Label { Text = "ms", AutoSize = true, Margin = new Padding(0, 19, 12, 0) };
 
         _autoSendChk.Text = "定时发送";
         _autoSendChk.AutoSize = true;
-        _autoSendChk.Margin = new Padding(0, 14, 8, 0);
+        _autoSendChk.Margin = new Padding(0, 18, 12, 0);
 
-        var clearSendBtn = new Button { Text = "清空", Width = 60, Height = 28, Margin = new Padding(0, 6, 0, 0) };
+        var clearSendBtn = new FlatButton
+        {
+            Text = "清空",
+            Variant = ButtonVariant.Secondary,
+            Size = new Size(64, 28),
+            Margin = new Padding(0, 12, 0, 0)
+        };
         clearSendBtn.Click += (_, _) => _sendBox.Clear();
-
-        _sendBtn.Text = "发送 (Ctrl+Enter)";
-        _sendBtn.Dock = DockStyle.Right;
-        _sendBtn.Width = 150;
-        _sendBtn.Font = new Font(Font, FontStyle.Bold);
-        _sendBtn.Click += async (_, _) => await SendCurrentAsync();
 
         flow.Controls.AddRange(new Control[]
         {
@@ -337,35 +504,78 @@ public sealed partial class MainForm : Form
         });
 
         bottom.Controls.Add(flow);
-        bottom.Controls.Add(_sendBtn);
+        bottom.Controls.Add(sendHost);
 
         _sendBox.Dock = DockStyle.Fill;
         _sendBox.Multiline = true;
+        _sendBox.BorderStyle = BorderStyle.None;
         _sendBox.ScrollBars = ScrollBars.Vertical;
-        _sendBox.Font = new Font("Consolas", 10F);
+        _sendBox.Font = Fonts.Mono(10F);
         _sendBox.AcceptsReturn = true;
         _sendBox.Text = "Hello TCP!";
 
-        group.Controls.Add(_sendBox);
-        group.Controls.Add(bottom);
-        return group;
+        card.Body.Controls.Add(_sendBox);
+        card.Body.Controls.Add(bottom);
+        return card;
     }
-
-    private void BuildStatusStrip()
+    private void BuildStatusBar()
     {
-        var strip = new StatusStrip { SizingGrip = true, BackColor = Color.FromArgb(246, 247, 250) };
+        _statusBar.Dock = DockStyle.Bottom;
+        _statusBar.Height = 34;
+        _statusBar.BorderTop = true;
+        _statusBar.UseSunken = true;
+
         _stateItem.Text = "就绪";
         _txItem.Text = "发送 0 B";
         _rxItem.Text = "接收 0 B";
         _connItem.Text = "连接 0";
-        _tipItem.Spring = true;
-        _tipItem.TextAlign = ContentAlignment.MiddleRight;
-        _tipItem.ForeColor = Color.FromArgb(120, 120, 120);
-        _tipItem.Text = "Ctrl+Enter 发送 · F5 连接/监听";
 
-        strip.Items.AddRange(new ToolStripItem[] { _stateItem, new ToolStripSeparator(), _txItem, new ToolStripSeparator(), _rxItem, new ToolStripSeparator(), _connItem, _tipItem });
-        Controls.Add(strip);
+        var flow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            WrapContents = false,
+            FlowDirection = FlowDirection.LeftToRight,
+            Padding = new Padding(14, 0, 0, 0),
+            Tag = "transparent"
+        };
+
+        flow.Controls.AddRange(new Control[]
+        {
+            StatusText(_stateItem),
+            DotSeparator(),
+            StatusText(_txItem),
+            DotSeparator(),
+            StatusText(_rxItem),
+            DotSeparator(),
+            StatusText(_connItem)
+        });
+
+        _tipItem.Dock = DockStyle.Right;
+        _tipItem.Width = 520;
+        _tipItem.TextAlign = ContentAlignment.MiddleRight;
+        _tipItem.Padding = new Padding(0, 0, 14, 0);
+        _tipItem.Tag = "muted";
+        _tipItem.Text = "Ctrl+Enter 发送 · F5 连接 / 监听";
+
+        _statusBar.Controls.Add(flow);
+        _statusBar.Controls.Add(_tipItem);
+        Controls.Add(_statusBar);
     }
+
+    private static Label StatusText(Label label)
+    {
+        label.AutoSize = true;
+        label.Margin = new Padding(0, 9, 0, 0);
+        return label;
+    }
+
+    private static Label DotSeparator() => new()
+    {
+        Text = "·",
+        AutoSize = true,
+        Margin = new Padding(10, 9, 10, 0),
+        Tag = "muted"
+    };
     private void WireEvents()
     {
         _modeBox.SelectedIndexChanged += async (_, _) => await OnModeChangedAsync();
@@ -452,7 +662,7 @@ public sealed partial class MainForm : Form
 
             if (_mainSplit.Width > 900)
             {
-                _mainSplit.SplitterDistance = 380;
+                _mainSplit.SplitterDistance = 424;
             }
         };
 
@@ -841,7 +1051,7 @@ public sealed partial class MainForm : Form
         RunOnUi(() =>
         {
             _stateLabel.Text = text;
-            _stateLabel.ForeColor = online ? Color.FromArgb(22, 140, 76) : Color.FromArgb(150, 90, 30);
+            _stateLabel.Tone = online ? PillTone.Success : PillTone.Warn;
             _stateItem.Text = text;
         });
     }
@@ -929,3 +1139,4 @@ public sealed partial class MainForm : Form
         }
     }
 }
+

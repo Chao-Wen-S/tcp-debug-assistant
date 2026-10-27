@@ -8,6 +8,8 @@
 
 ![服务端模式](docs/screenshot-server.png)
 
+![深色模式](docs/screenshot-dark.png)
+
 ---
 
 ## 功能
@@ -23,13 +25,15 @@
 | 客户端 | 断线自动重连（间隔可调），主动断开不重连 |
 | 状态 | 实时发送 / 接收字节数与连接数 |
 | 快捷键 | F5 连接 / 断开（服务端为开始 / 停止监听），Ctrl+Enter 发送 |
+| 主题 | 浅色 / 深色一键切换，系统标题栏同步变色（自建设计系统，无第三方 UI 库） |
 | 体验 | PerMonitorV2 DPI 感知、未处理异常兜底弹窗 |
 
 ## 下载
 
 到 [Releases](https://github.com/Chao-Wen-S/tcp-debug-assistant/releases) 下载：
 
-- `tcp-debug-assistant-v1.0-win-x64.zip` —— 免安装，解压双击 `TcpDebugAssistant.exe`（自带运行时）
+- `tcp-debug-assistant-v1.1-win-x64.zip` —— 免安装，解压双击 `TcpDebugAssistant.exe`（自带运行时，最新版：全新 UI + 深色模式）
+- `tcp-debug-assistant-v1.0-win-x64.zip` —— 上一版（经典界面），保留在 v1.0 Release 页
 
 ## 从源码构建
 

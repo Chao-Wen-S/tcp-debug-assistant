@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 
 namespace TcpDebugAssistant.App;
 
@@ -18,6 +18,16 @@ internal static class Program
 
         var selfTest = args.Any(a => a.Equals("--self-test", StringComparison.OrdinalIgnoreCase));
         var shotIndex = Array.FindIndex(args, a => a.Equals("--screenshot", StringComparison.OrdinalIgnoreCase));
+        var darkShot = args.Any(a => a.Equals("--dark", StringComparison.OrdinalIgnoreCase));
+
+        if (darkShot && !selfTest && shotIndex < 0)
+        {
+            form.Shown += (_, _) =>
+            {
+                Theme.Toggle();
+                form.ApplyTheme();
+            };
+        }
 
         if (selfTest)
         {
@@ -53,8 +63,16 @@ internal static class Program
         {
             var path = args[shotIndex + 1];
             var serverShot = args.Any(a => a.Equals("--server", StringComparison.OrdinalIgnoreCase));
+
             form.Shown += async (_, _) =>
             {
+                if (darkShot)
+                {
+                    Theme.Toggle();
+                    form.ApplyTheme();
+                    await Task.Delay(150);
+                }
+
                 if (serverShot)
                 {
                     form.SelectServerMode();
@@ -84,6 +102,15 @@ internal static class Program
 
     private static void ShowFatal(Exception? ex)
     {
+        try
+        {
+            File.AppendAllText(Path.Combine(AppContext.BaseDirectory, "error.log"), DateTime.Now + " " + ex + Environment.NewLine);
+        }
+        catch
+        {
+            // 日志写入失败忽略。
+        }
+
         try
         {
             MessageBox.Show(
