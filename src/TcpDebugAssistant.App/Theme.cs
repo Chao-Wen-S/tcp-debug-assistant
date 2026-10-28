@@ -463,6 +463,30 @@ internal sealed class PillLabel : Label, IThemed
     /// <summary>是否在文字前画一个状态圆点（连接 / 监听状态用）。</summary>
     public bool ShowDot { get; set; }
 
+    /// <summary>按文字自动调整宽度（状态胶囊用，避免出现一大截空壳）。</summary>
+    public bool AutoFit { get; set; }
+
+    [System.Diagnostics.CodeAnalysis.AllowNull]
+    public override string Text
+    {
+        get => base.Text;
+        set
+        {
+            base.Text = value ?? string.Empty;
+            if (AutoFit)
+            {
+                FitToText();
+            }
+        }
+    }
+
+    public void FitToText()
+    {
+        var size = TextRenderer.MeasureText(
+            Text, Font, Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
+        Width = size.Width + (ShowDot ? 17 : 0) + 30;
+    }
+
     public PillLabel()
     {
         SetStyle(ControlStyles.ResizeRedraw | ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);

@@ -267,9 +267,13 @@ public sealed partial class MainForm : Form
         _stateLabel.Text = "未连接";
         _stateLabel.Tone = PillTone.Neutral;
         _stateLabel.ShowDot = true;
-        _stateLabel.Size = new Size(210, 30);
+        _stateLabel.AutoFit = true;
+        _stateLabel.Height = 30;
+        _stateLabel.FitToText();
         _stateLabel.Location = new Point(Math.Max(754, rowWidth - _stateLabel.Width), 3);
-        row1.Resize += (_, _) => _stateLabel.Left = Math.Max(0, row1.ClientSize.Width - _stateLabel.Width);
+        void RelayoutState() => _stateLabel.Left = Math.Max(0, row1.ClientSize.Width - _stateLabel.Width);
+        row1.Resize += (_, _) => RelayoutState();
+        _stateLabel.SizeChanged += (_, _) => RelayoutState();
 
         row1.Controls.AddRange(new Control[] { modeLabel, _modeBox, hostLabel, _hostBox, portLabel, _portBox, _connectBtn, _stateLabel });
 
