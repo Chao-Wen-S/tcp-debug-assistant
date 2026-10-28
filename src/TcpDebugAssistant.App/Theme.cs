@@ -133,6 +133,56 @@ internal interface IThemed
     void ApplyTheme(AppTheme t);
 }
 
+/// <summary>让原生控件（滚动条、下拉列表）跟随深色主题。失败时静默降级，不影响功能。</summary>
+internal static class NativeDark
+{
+    [System.Runtime.InteropServices.DllImport("uxtheme.dll", EntryPoint = "#135", SetLastError = true)]
+    private static extern int SetPreferredAppMode(int appMode);
+
+    [System.Runtime.InteropServices.DllImport("uxtheme.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int SetWindowTheme(IntPtr hWnd, string? subAppName, string? subIdList);
+
+    private static bool _available = true;
+
+    /// <summary>进程级：允许系统使用深色原生控件（滚动条、下拉框）。</summary>
+    public static void TryEnable()
+    {
+        try
+        {
+            // 2 = AllowDark：由 SetWindowTheme 逐个控件决定深浅
+            SetPreferredAppMode(2);
+        }
+        catch
+        {
+            _available = false;
+        }
+    }
+
+    /// <summary>单个控件：深色用 DarkMode_Explorer，浅色用 Explorer。</summary>
+    public static void Apply(Control control, bool dark)
+    {
+        if (!_available)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!control.IsHandleCreated)
+            {
+                _ = control.Handle; // 触发句柄创建，否则 SetWindowTheme 无效
+            }
+
+            SetWindowTheme(control.Handle, dark ? "DarkMode_Explorer" : "Explorer", null);
+            control.Invalidate();
+        }
+        catch
+        {
+            _available = false;
+        }
+    }
+}
+
 /// <summary>1px 细线面板，用于顶栏 / 状态栏的分隔。</summary>
 internal sealed class BorderedPanel : Panel, IThemed
 {
@@ -222,7 +272,7 @@ internal sealed class Card : Panel, IThemed
         var t = _theme;
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         var r = new Rectangle(0, 0, Width - 1, Height - 1);
-        using var path = Ui.Round(r, 10);
+        using var path = Ui.Round(r, 12);
         using var bg = new SolidBrush(t.Surface);
         using var pen = new Pen(t.Border);
         e.Graphics.FillPath(bg, path);
@@ -234,6 +284,7 @@ internal enum ButtonVariant
 {
     Primary,
     Secondary,
+    Soft,
     Ghost,
     Danger
 }
@@ -251,7 +302,10 @@ internal sealed class FlatButton : Button, IThemed
 
     public FlatButton()
     {
-        SetStyle(ControlStyles.ResizeRedraw | ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);
+        SetStyle(
+            ControlStyles.ResizeRedraw | ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint |
+            ControlStyles.UserPaint | ControlStyles.SupportsTransparentBackColor,
+            true);
         FlatStyle = FlatStyle.Flat;
         FlatAppearance.BorderSize = 0;
         UseVisualStyleBackColor = false;
@@ -259,11 +313,21 @@ internal sealed class FlatButton : Button, IThemed
         Font = Fonts.Ui(9F);
     }
 
+    /// <summary>按钮所在容器的底色：圆角外的四角用它填平，避免残留系统底色。</summary>
+    private Color Canvas => Parent?.BackColor is { } c && c.A != 0 ? c : _theme.Surface;
+
     public void ApplyTheme(AppTheme t)
     {
         _theme = t;
-        BackColor = Color.Transparent;
+        // 不能用 Color.Transparent：Button 不支持透明背景，系统会先用黑色擦一遍，四角留黑块。
+        BackColor = Canvas;
         Invalidate();
+    }
+
+    protected override void OnParentBackColorChanged(EventArgs e)
+    {
+        base.OnParentBackColorChanged(e);
+        BackColor = Canvas;
     }
 
     protected override void OnMouseEnter(EventArgs e)
@@ -299,6 +363,13 @@ internal sealed class FlatButton : Button, IThemed
     {
         var t = _theme;
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+        // 先铺满容器底色，再把圆角填充画在上面，四角才不会露系统底。
+        using (var canvas = new SolidBrush(Canvas))
+        {
+            e.Graphics.FillRectangle(canvas, ClientRectangle);
+        }
+
         var r = new Rectangle(0, 0, Width - 1, Height - 1);
         using var path = Ui.Round(r, Radius);
 
@@ -316,6 +387,11 @@ internal sealed class FlatButton : Button, IThemed
                 back = _hover ? Mix(t.Danger, t.Surface, 0.15) : t.Surface;
                 fore = t.Danger;
                 border = t.Danger;
+                break;
+            case ButtonVariant.Soft:
+                // 强调用的浅色按钮：淡主色底 + 主色文字，用于工具条里的轻操作。
+                back = Mix(t.Accent, t.Surface, _hover ? (t.Dark ? 0.72 : 0.82) : (t.Dark ? 0.80 : 0.90));
+                fore = t.Accent;
                 break;
             case ButtonVariant.Ghost:
                 back = _hover ? t.Sunken : (Parent?.BackColor ?? t.Surface);
@@ -384,6 +460,9 @@ internal sealed class PillLabel : Label, IThemed
 
     public PillTone Tone { get; set; } = PillTone.Neutral;
 
+    /// <summary>是否在文字前画一个状态圆点（连接 / 监听状态用）。</summary>
+    public bool ShowDot { get; set; }
+
     public PillLabel()
     {
         SetStyle(ControlStyles.ResizeRedraw | ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);
@@ -415,14 +494,28 @@ internal sealed class PillLabel : Label, IThemed
 
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         var r = new Rectangle(0, 2, Width - 1, Height - 5);
-        using var path = Ui.Round(r, 8);
+        using var path = Ui.Round(r, Math.Min(r.Height / 2, 12));
         using var brush = new SolidBrush(bg);
         e.Graphics.FillPath(brush, path);
+        using (var edge = new Pen(Mix(fg, bg, 0.72)))
+        {
+            e.Graphics.DrawPath(edge, path);
+        }
+
+        var textLeft = r.X + 10;
+        if (ShowDot)
+        {
+            const int dot = 7;
+            using var dotBrush = new SolidBrush(fg);
+            e.Graphics.FillEllipse(dotBrush, textLeft, r.Y + (r.Height - dot) / 2, dot, dot);
+            textLeft += dot + 7;
+        }
+
         TextRenderer.DrawText(
             e.Graphics,
             Text,
             Font,
-            new Rectangle(r.X + 10, r.Y, r.Width - 14, r.Height),
+            new Rectangle(textLeft, r.Y, r.Right - textLeft - 8, r.Height),
             fg,
             TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
     }
@@ -449,6 +542,9 @@ internal sealed class ThemedListView : ListView, IThemed
         HideSelection = false;
         MultiSelect = false;
         Font = Fonts.Ui(9F);
+
+        // ListView 没有 RowHeight 属性，用 1px 空图标列表把行高撑高，行距更透气。
+        SmallImageList = new ImageList { ImageSize = new Size(1, 24) };
     }
 
     public void ApplyTheme(AppTheme t)
@@ -494,6 +590,18 @@ internal sealed class ThemedListView : ListView, IThemed
         using (var bg = new SolidBrush(back))
         {
             e.Graphics.FillRectangle(bg, e.Bounds);
+        }
+
+        if (selected && e.ColumnIndex == 0)
+        {
+            // 选中行左侧 3px 主色条，替代系统蓝色高亮。
+            using var accent = new SolidBrush(t.Accent);
+            e.Graphics.FillRectangle(accent, e.Bounds.Left, e.Bounds.Top + 2, 3, e.Bounds.Height - 5);
+        }
+
+        using (var line = new Pen(t.Border))
+        {
+            e.Graphics.DrawLine(line, e.Bounds.Left, e.Bounds.Bottom - 1, e.Bounds.Right, e.Bounds.Bottom - 1);
         }
 
         var flags = TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix;
@@ -548,6 +656,70 @@ internal sealed class BrandMark : Control, IThemed
     }
 }
 
+
+/// <summary>顶栏能力标记：小号圆角标签。</summary>
+internal sealed class ChipLabel : Control, IThemed
+{
+    private AppTheme _theme = Theme.Current;
+
+    public ChipLabel(string text, bool accent = false)
+    {
+        SetStyle(
+            ControlStyles.ResizeRedraw | ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint |
+            ControlStyles.UserPaint | ControlStyles.SupportsTransparentBackColor,
+            true);
+        Text = text;
+        Accent = accent;
+        Font = Fonts.Ui(8.25F);
+        Height = 21;
+        Width = TextRenderer.MeasureText(text, Font).Width + 20;
+        BackColor = Color.Transparent;
+    }
+
+    public bool Accent { get; }
+
+    public void ApplyTheme(AppTheme t)
+    {
+        _theme = t;
+        Invalidate();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var t = _theme;
+        e.Graphics.Clear(Parent?.BackColor ?? t.Surface);
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+        var r = new Rectangle(0, 0, Width - 1, Height - 1);
+        using var path = Ui.Round(r, 7);
+        using (var bg = new SolidBrush(Accent ? Mix(t.Accent, t.Surface, t.Dark ? 0.80 : 0.90) : t.Sunken))
+        {
+            e.Graphics.FillPath(bg, path);
+        }
+
+        using (var pen = new Pen(Accent ? Mix(t.Accent, t.Surface, t.Dark ? 0.55 : 0.70) : t.Border))
+        {
+            e.Graphics.DrawPath(pen, path);
+        }
+
+        TextRenderer.DrawText(
+            e.Graphics,
+            Text,
+            Font,
+            r,
+            Accent ? t.Accent : t.Muted,
+            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+    }
+
+    private static Color Mix(Color a, Color b, double ratio)
+    {
+        var r = (int)(a.R * (1 - ratio) + b.R * ratio);
+        var g = (int)(a.G * (1 - ratio) + b.G * ratio);
+        var bl = (int)(a.B * (1 - ratio) + b.B * ratio);
+        return Color.FromArgb(r, g, bl);
+    }
+}
+
 /// <summary>把主题套到原生控件上（Label / TextBox / ComboBox / CheckBox / NumericUpDown / Panel / SplitContainer）。</summary>
 internal static class ThemePaint
 {
@@ -570,10 +742,11 @@ internal static class ThemePaint
             case ThemedListView:
             case BorderedPanel:
             case BrandMark:
+            case ChipLabel:
                 return;
             case Label label:
                 label.ForeColor = IsMuted(label) ? t.Muted : t.Text;
-                label.BackColor = Color.Transparent;
+                label.BackColor = HasTag(label, "sunken") ? t.Sunken : Color.Transparent;
                 break;
             case CheckBox box:
                 box.ForeColor = t.Text;
@@ -583,20 +756,30 @@ internal static class ThemePaint
                 // TextBox / RichTextBox 统一上色（RichTextBox 只读时默认系统白底）
                 text.BackColor = t.Sunken;
                 text.ForeColor = t.Text;
+                NativeDark.Apply(text, t.Dark);
                 break;
             case ComboBox combo:
                 combo.FlatStyle = FlatStyle.Flat;
                 combo.BackColor = t.Surface;
                 combo.ForeColor = t.Text;
+                NativeDark.Apply(combo, t.Dark);
                 break;
             case NumericUpDown num:
                 num.BackColor = t.Surface;
                 num.ForeColor = t.Text;
                 num.BorderStyle = BorderStyle.FixedSingle;
-                if (num.Controls.Count > 1)
+                // NumericUpDown 的内嵌编辑框是独立子控件，必须逐个上色，否则深色下仍是白底。
+                foreach (Control child in num.Controls)
                 {
-                    Style(num.Controls[1], t);
+                    Style(child, t);
+                    if (child is TextBoxBase inner)
+                    {
+                        inner.BackColor = t.Sunken;
+                        inner.ForeColor = t.Text;
+                    }
                 }
+
+                NativeDark.Apply(num, t.Dark);
 
                 break;
             case SplitContainer split:
@@ -623,7 +806,10 @@ internal static class ThemePaint
         }
     }
 
-    private static bool IsMuted(Control c) => (c.Tag as string) == "muted";
+    private static bool IsMuted(Control c) => HasTag(c, "muted");
+
+    private static bool HasTag(Control c, string tag) =>
+        (c.Tag as string)?.Contains(tag, StringComparison.Ordinal) == true;
 }
 /// <summary>下拉选择控件：系统 ComboBox 在深色模式下会留白底，这里自绘，浅/深色都统一。</summary>
 internal sealed class SelectField : Control, IThemed
@@ -789,5 +975,263 @@ internal sealed class SelectField : Control, IThemed
         public override Color MenuItemSelected => _t.Selection;
         public override Color MenuItemSelectedGradientBegin => _t.Selection;
         public override Color MenuItemSelectedGradientEnd => _t.Selection;
+    }
+}
+
+/// <summary>数字输入：自绘圆角字段 + 上下步进，避免系统 NumericUpDown 在深色下的白底。</summary>
+internal sealed class NumberField : Control, IThemed
+{
+    private const int ArrowWidth = 20;
+
+    private readonly TextBox _edit = new();
+    private AppTheme _theme = Theme.Current;
+    private int _value;
+    private int _minimum;
+    private int _maximum = 100;
+    private int _increment = 1;
+    private bool _sync;
+    private bool _hot;
+
+    public NumberField()
+    {
+        SetStyle(
+            ControlStyles.ResizeRedraw | ControlStyles.OptimizedDoubleBuffer |
+            ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+            ControlStyles.SupportsTransparentBackColor,
+            true);
+        Size = new Size(88, 28);
+        Font = Fonts.Ui(9F);
+        BackColor = Color.Transparent;
+
+        _edit.BorderStyle = BorderStyle.None;
+        _edit.TextAlign = HorizontalAlignment.Left;
+        _edit.Font = Fonts.Ui(9F);
+        _edit.TextChanged += (_, _) => OnTyped();
+        _edit.LostFocus += (_, _) => SyncText();
+        _edit.GotFocus += (_, _) => Invalidate();
+        _edit.KeyDown += OnEditKeyDown;
+        _edit.MouseWheel += (_, e) => Step(e.Delta > 0 ? _increment : -_increment);
+        Controls.Add(_edit);
+        SyncText();
+    }
+
+    public event EventHandler? ValueChanged;
+
+    public int Minimum
+    {
+        get => _minimum;
+        set
+        {
+            _minimum = value;
+            if (_maximum < _minimum)
+            {
+                _maximum = _minimum;
+            }
+
+            Reclamp();
+        }
+    }
+
+    public int Maximum
+    {
+        get => _maximum;
+        set
+        {
+            _maximum = Math.Max(value, _minimum);
+            Reclamp();
+        }
+    }
+
+    public int Increment
+    {
+        get => _increment;
+        set => _increment = Math.Max(1, value);
+    }
+
+    public int Value
+    {
+        get => _value;
+        set
+        {
+            var next = Math.Clamp(value, _minimum, _maximum);
+            if (next == _value)
+            {
+                SyncText();
+                return;
+            }
+
+            _value = next;
+            SyncText();
+            ValueChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    public void FocusEdit() => _edit.Focus();
+
+    public void ApplyTheme(AppTheme t)
+    {
+        _theme = t;
+        _edit.BackColor = t.Sunken;
+        _edit.ForeColor = t.Text;
+        NativeDark.Apply(_edit, t.Dark);
+        Invalidate();
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        LayoutEdit();
+    }
+
+    protected override void OnSizeChanged(EventArgs e)
+    {
+        base.OnSizeChanged(e);
+        LayoutEdit();
+    }
+
+    protected override void OnMouseEnter(EventArgs e)
+    {
+        _hot = true;
+        Invalidate();
+        base.OnMouseEnter(e);
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        _hot = false;
+        Invalidate();
+        base.OnMouseLeave(e);
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        if (e.X >= Width - ArrowWidth)
+        {
+            Step(e.Y < Height / 2 ? _increment : -_increment);
+        }
+        else
+        {
+            _edit.Focus();
+        }
+    }
+
+    protected override void OnMouseWheel(MouseEventArgs e)
+    {
+        base.OnMouseWheel(e);
+        if (Focused || _edit.Focused)
+        {
+            Step(e.Delta > 0 ? _increment : -_increment);
+        }
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var t = _theme;
+        e.Graphics.Clear(Parent?.BackColor ?? t.Surface);
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+        using var path = Ui.Round(new Rectangle(0, 0, Width - 1, Height - 1), 6);
+        using (var bg = new SolidBrush(t.Sunken))
+        {
+            e.Graphics.FillPath(bg, path);
+        }
+
+        using (var pen = new Pen(_hot || _edit.Focused ? t.Accent : t.Border))
+        {
+            e.Graphics.DrawPath(pen, path);
+        }
+
+        var cx = Width - ArrowWidth / 2 - 3;
+        var cy = Height / 2;
+        using var chevron = new Pen(t.Muted, 1.6F) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        e.Graphics.DrawLine(chevron, cx - 4, cy - 3, cx, cy - 7);
+        e.Graphics.DrawLine(chevron, cx + 4, cy - 3, cx, cy - 7);
+        e.Graphics.DrawLine(chevron, cx - 4, cy + 3, cx, cy + 7);
+        e.Graphics.DrawLine(chevron, cx + 4, cy + 3, cx, cy + 7);
+    }
+
+    private void LayoutEdit()
+    {
+        var h = Math.Max(12, _edit.PreferredHeight);
+        var top = Math.Max(2, (Height - h) / 2);
+        var width = Math.Max(20, Width - ArrowWidth - 14);
+        _edit.SetBounds(10, top, width, h);
+    }
+
+    private void Reclamp()
+    {
+        var next = Math.Clamp(_value, _minimum, _maximum);
+        if (next != _value)
+        {
+            _value = next;
+            ValueChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        SyncText();
+    }
+
+    private void Step(int delta)
+    {
+        if (!Enabled)
+        {
+            return;
+        }
+
+        Value = _value + delta;
+    }
+
+    private void OnTyped()
+    {
+        if (_sync)
+        {
+            return;
+        }
+
+        if (!int.TryParse(_edit.Text.Trim(), out var typed))
+        {
+            return;
+        }
+
+        if (typed < _minimum || typed > _maximum)
+        {
+            return;
+        }
+
+        if (typed != _value)
+        {
+            _value = typed;
+            ValueChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void OnEditKeyDown(object? sender, KeyEventArgs e)
+    {
+        switch (e.KeyCode)
+        {
+            case Keys.Up:
+                Step(_increment);
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                break;
+            case Keys.Down:
+                Step(-_increment);
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                break;
+            case Keys.Enter:
+                SyncText();
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                break;
+        }
+    }
+
+    private void SyncText()
+    {
+        _sync = true;
+        _edit.Text = _value.ToString();
+        _sync = false;
+        LayoutEdit();
     }
 }

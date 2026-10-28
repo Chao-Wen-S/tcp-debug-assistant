@@ -196,6 +196,16 @@ public sealed partial class MainForm
         Check(_connectBtn.Text == "开始监听", "停止监听后按钮复位", _connectBtn.Text);
 
         sb.AppendLine();
+        sb.AppendLine("[界面控件]");
+        var number = new NumberField { Minimum = 1, Maximum = 65535, Width = 92 };
+        number.Value = 8080;
+        Check(number.Value == 8080, "数字框可写入取值", number.Value.ToString());
+        number.Value = 70000;
+        Check(number.Value == 65535, "数字框超上限自动收敛", number.Value.ToString());
+        number.Value = 0;
+        Check(number.Value == 1, "数字框超下限自动收敛", number.Value.ToString());
+
+        sb.AppendLine();
         sb.AppendLine($"结果：通过 {CountPass(sb.ToString())}，失败 {failed}");
         return (sb.ToString(), failed);
     }
@@ -218,6 +228,31 @@ public sealed partial class MainForm
     {
         var flat = text.Replace("\r", " ").Replace("\n", " ").Trim();
         return flat.Length <= 120 ? flat : flat[..120] + "…";
+    }
+
+    /// <summary>界面排障：把整棵控件树的边界写到文件（--dump-layout 用）。</summary>
+    internal void DumpLayout(string path)
+    {
+        var sb = new StringBuilder();
+        void Walk(Control c, int depth)
+        {
+            var pad = new string(' ', depth * 2);
+            var name = c.GetType().Name;
+            var text = c.Text.Replace("\r", " ").Replace("\n", " ");
+            if (text.Length > 28)
+            {
+                text = text[..28] + "…";
+            }
+
+            sb.AppendLine($"{pad}{name} [{c.Left},{c.Top} {c.Width}x{c.Height}] dock={c.Dock} vis={c.Visible} text=\"{text}\"");
+            foreach (Control child in c.Controls)
+            {
+                Walk(child, depth + 1);
+            }
+        }
+
+        Walk(this, 0);
+        File.WriteAllText(path, sb.ToString(), new UTF8Encoding(true));
     }
 
     /// <summary>供截图脚本使用：切换到服务端模式。</summary>

@@ -14,6 +14,9 @@ internal static class Program
         Application.ThreadException += (_, e) => ShowFatal(e.Exception);
         AppDomain.CurrentDomain.UnhandledException += (_, e) => ShowFatal(e.ExceptionObject as Exception);
 
+        // 允许系统在深色主题下使用原生深色滚动条 / 下拉框。
+        NativeDark.TryEnable();
+
         var form = new MainForm();
 
         var selfTest = args.Any(a => a.Equals("--self-test", StringComparison.OrdinalIgnoreCase));
@@ -26,6 +29,34 @@ internal static class Program
             {
                 Theme.Toggle();
                 form.ApplyTheme();
+            };
+        }
+
+        // --server：启动即切到服务端模式，方便演示 / 截图 / 现场演示。
+        var serverMode = args.Any(a => a.Equals("--server", StringComparison.OrdinalIgnoreCase));
+        if (serverMode && !selfTest && shotIndex < 0)
+        {
+            form.Shown += (_, _) => form.SelectServerMode();
+        }
+
+        // --dump-layout <file>：排障用，把控件树边界写文件后退出。
+        var dumpIndex = Array.FindIndex(args, a => a.Equals("--dump-layout", StringComparison.OrdinalIgnoreCase));
+        if (dumpIndex >= 0 && dumpIndex + 1 < args.Length && !selfTest && shotIndex < 0)
+        {
+            var dumpPath = args[dumpIndex + 1];
+            form.Shown += async (_, _) =>
+            {
+                await Task.Delay(600);
+                try
+                {
+                    form.DumpLayout(dumpPath);
+                }
+                catch
+                {
+                    // 排障失败不影响主流程。
+                }
+
+                form.Close();
             };
         }
 

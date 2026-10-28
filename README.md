@@ -25,14 +25,23 @@
 | 客户端 | 断线自动重连（间隔可调），主动断开不重连 |
 | 状态 | 实时发送 / 接收字节数与连接数 |
 | 快捷键 | F5 连接 / 断开（服务端为开始 / 停止监听），Ctrl+Enter 发送 |
-| 主题 | 浅色 / 深色一键切换，系统标题栏同步变色（自建设计系统，无第三方 UI 库） |
+| 主题 | 浅色 / 深色一键切换，系统标题栏、滚动条同步变色（自建设计系统，无第三方 UI 库） |
 | 体验 | PerMonitorV2 DPI 感知、未处理异常兜底弹窗 |
+
+## 界面（v1.2）
+
+- 顶栏品牌区 + 能力小标签：客户端 / 服务端、HEX、定时发送、多客户端广播
+- 自绘圆角卡片、胶囊状态灯、分段按钮，统一 14 / 16 / 18px 间距栅格
+- 数字输入框自绘（端口、重连间隔、定时周期）：圆角 + 上下步进，深色模式下不再出现系统白底
+- 深色模式接入系统原生深色滚动条，取不到接口时静默降级
+- 客户端 / 服务端切换后右栏自动补边距，窄窗口下发送工具条不再被裁切
+- 窗口 1240×800（最小 1040×700），PerMonitorV2 DPI 感知
 
 ## 下载
 
 到 [Releases](https://github.com/Chao-Wen-S/tcp-debug-assistant/releases) 下载：
 
-- `tcp-debug-assistant-v1.1-win-x64.zip` —— 免安装，解压双击 `TcpDebugAssistant.exe`（自带运行时，最新版：全新 UI + 深色模式）
+- `tcp-debug-assistant-v1.2-win-x64.zip` —— 免安装，解压双击 `TcpDebugAssistant.exe`（自带运行时，最新版：UI 打磨 + 深色模式完善）
 - `tcp-debug-assistant-v1.0-win-x64.zip` —— 上一版（经典界面），保留在 v1.0 Release 页
 
 ## 从源码构建
@@ -105,7 +114,7 @@ docs/                            截图与测试报告
 # 核心逻辑 / 网络行为（38 个用例）
 dotnet run --project tests\TcpDebugAssistant.Tests -c Release
 
-# 界面级自动化自检（22 项，真实控件 + 真实 socket）
+# 界面级自动化自检（25 项，真实控件 + 真实 socket）
 src\TcpDebugAssistant.App\bin\Release\net8.0-windows\TcpDebugAssistant.exe --self-test
 ```
 
